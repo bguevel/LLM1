@@ -92,7 +92,7 @@ class Attention_head(nn.Module):
         # this checks that each token's embedding dimension is d_model
         # 1) Project to queries/keys/values
         # x  →  (B·T) × D when being multiplied by the matrix d_model by d_model
-        Q = self.W_q(x)  # this multiplies the x tensor by a matrix of d_model by d_model the result is a matrix of d_model by d_model
+        Q = self.W_q(x)
         # (B·T × D)  @  (D × D)  →  (B·T × D)
         # Then PyTorch reshapes the result back to: B × T × D
         K = self.W_k(x)  
@@ -170,7 +170,7 @@ class Transformer(nn.Module):
         x = self.embed(tokens)  # [B, T, D]
 
         for block in self.blocks:
-            x = block(x)        # still [B, T, D] also does basically x = block.forward(x)  # avoid
+            x = block(x)        # still [B, T, D] also does basically x = block.forward(x) 
 
         x = self.ln_f(x) # normalize the output
         logits = self.unembed(x)  # [B, T, V] 
