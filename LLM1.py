@@ -9,7 +9,7 @@ class Config: #nodes of the network
     d_vocab: int # this is the external language of the network
     d_hidden: int # the number of nodes (neurons) in the hidder layer
 
-class Transformer(nn.Module):
+class Transformer1(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
         # imagine that we have a input layer that is d_model wide, because each node puts off a different real number element of the embedding vector
@@ -132,3 +132,23 @@ class TransformerBlock(nn.Module):
 
         return x
     
+class Transformer(nn.Module):
+    def __init__(self, config: Config, n_layers: int = 2):
+        super().__init__()
+        self.embed = nn.Embedding(config.d_vocab, config.d_model)
+
+        self.blocks = nn.ModuleList([TransformerBlock(config) for _ in range(n_layers)])
+
+        self.ln_f = nn.LayerNorm(config.d_model)   # final norm (common)
+        self.unembed = nn.Linear(config.d_model, config.d_vocab)
+
+    def forward(self, tokens):
+        # tokens: [B, T]
+        x = self.embed(tokens)  # [B, T, D]
+
+        for block in self.blocks:
+            x = block(x)        # still [B, T, D]
+
+        x = self.ln_f(x)
+        logits = self.unembed(x)  # [B, T, V]
+        return logits
