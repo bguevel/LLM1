@@ -3,6 +3,9 @@ import torch
 import math
 import torch.nn as nn
 from jaxtyping import Float, Int
+import torch.nn.functional as F
+from transformers import AutoTokenizer
+from torch.utils.data import Dataset, DataLoader
 @dataclass
 class Config: #nodes of the network
     d_model: int # this is the internal language of the network
@@ -176,3 +179,139 @@ class Transformer(nn.Module):
         logits = self.unembed(x)  # [B, T, V] 
         # for each token position, produce a score for every possible vocabulary token
         return logits
+    
+@torch.no_grad()
+def generate_greedy(model, prompt_tokens, max_new_tokens=50):
+    """
+    model: your Transformer (returns logits [B, T, V])
+    prompt_tokens: LongTensor of shape [B, T] (token ids)
+    returns: LongTensor of shape [B, T + max_new_tokens]
+    """
+    model.eval()
+    tokens = prompt_tokens
+
+    for _ in range(max_new_tokens):
+        logits = model(tokens)              # [B, T, V]
+        next_logits = logits[:, -1, :]      # [B, V] (use last position)
+        next_token = torch.argmax(next_logits, dim=-1, keepdim=True)  # [B, 1]
+        tokens = torch.cat([tokens, next_token], dim=1)  # append on T dimension
+
+    return tokens
+
+def top_k_filter(logits, k):
+    """
+    logits: [B, V]
+    keeps only top-k logits per batch row; sets the rest to -inf
+    """
+    if k is None or k <= 0:
+        return logits
+
+    V = logits.size(-1)
+    k = min(k, V)  # make sure k is not bigger than vocab size
+
+    topk_vals, _ = torch.topk(logits, k, dim=-1)
+    cutoff = topk_vals[:, -1].unsqueeze(-1)  # [B, 1]
+    return logits.masked_fill(logits < cutoff, float("-inf"))
+
+
+@torch.no_grad()
+def generate_sample(model, prompt_tokens, max_new_tokens=50, temperature=1.0, top_k=None):
+    """
+    temperature: >0. Lower -> more deterministic, higher -> more random.
+    top_k: if set (e.g. 50), sample only from the top_k tokens.
+    """
+    model.eval()
+    tokens = prompt_tokens
+
+    for _ in range(max_new_tokens):
+        logits = model(tokens)                 # [B, T, V]
+        next_logits = logits[:, -1, :]         # [B, V]
+
+        # temperature scaling
+        next_logits = next_logits / max(temperature, 1e-8)
+
+        # optional top-k
+        next_logits = top_k_filter(next_logits, top_k)
+
+        probs = F.softmax(next_logits, dim=-1)          # [B, V]
+        next_token = torch.multinomial(probs, num_samples=1)  # [B, 1]
+
+        tokens = torch.cat([tokens, next_token], dim=1)
+
+    return tokens
+def train(model, dataloader, epochs=5, lr=3e-4, device="cpu"):
+    model.to(device)
+    model.train()
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+
+    for epoch in range(epochs):
+        total_loss = 0.0
+
+        for x, y in dataloader:
+            # x, y: [B, T]
+            x = x.to(device)
+            y = y.to(device)
+
+            logits = model(x)  # [B, T, V]
+
+            # CrossEntropyLoss expects:
+            #   input:  [N, C]
+            #   target: [N]
+            B, T, V = logits.shape
+            loss = F.cross_entropy(logits.view(B*T, V), y.view(B*T))
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        avg_loss = total_loss / len(dataloader)
+        print(f"epoch {epoch+1}/{epochs} | loss {avg_loss:.4f}")
+
+class NextTokenDataset(Dataset):
+    def __init__(self, token_ids: list[int], block_size: int):
+        """
+        token_ids: the entire corpus encoded into token ids
+        block_size: length T of the input sequence
+        """
+        self.data = torch.tensor(token_ids, dtype=torch.long)
+        self.block_size = block_size
+
+    def __len__(self):
+        # we need room for x of length block_size and y of length block_size
+        return len(self.data) - self.block_size - 1
+
+    def __getitem__(self, idx):
+        x = self.data[idx : idx + self.block_size]                 # [T]
+        y = self.data[idx + 1 : idx + 1 + self.block_size]         # [T] (next tokens)
+        return x, y
+class CharTokenizer:
+    def __init__(self, text_corpus: str):
+        chars = sorted(list(set(text_corpus)))
+        self.stoi = {ch: i for i, ch in enumerate(chars)}
+        self.itos = {i: ch for ch, i in self.stoi.items()}
+        self.vocab_size = len(self.stoi)
+
+    def encode(self, text: str) -> list[int]:
+        return [self.stoi[ch] for ch in text]
+
+    def decode(self, ids: list[int]) -> str:
+        return "".join(self.itos[i] for i in ids)
+    
+
+prompt = "Once upon a time"
+tokenizer = CharTokenizer(prompt)
+
+config = Config(d_model=256, d_vocab=tokenizer.vocab_size, d_hidden=1024)
+model = Transformer(config, n_layers=2)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+prompt_ids = tokenizer.encode(prompt)
+tokens = torch.tensor([prompt_ids], dtype=torch.long, device=device)
+
+out = generate_sample(model, tokens, max_new_tokens=60, temperature=0.8, top_k=50)
+print(tokenizer.decode(out[0].tolist()))
