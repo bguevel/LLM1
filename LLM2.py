@@ -23,23 +23,27 @@ class Config: #nodes of the network
 class Transformer(nn.Module):
     def __init__(self, config: Config, inputstr: str):
         super().__init__()
-        self.tokenizer = WordTokenizer(inputstr) # tokenize the input string
+        self.tokenizer = WordTokenizer(inputstr)
         d_vocab = self.tokenizer.vocab_size
+
         self.embed = Embedding(config, d_vocab)
         self.blocks = nn.ModuleList([TransformerBlock(config) for _ in range(config.num_blocks)])
-        self.ln_f = nn.LayerNorm(config.d_model)   # final norm (common)
-        self.unembed = nn.Linear(config.d_model, config.d_vocab)
+        self.ln_f = nn.LayerNorm(config.d_model)
+        self.unembed = nn.Linear(config.d_model, d_vocab)
 
-    def forward(self, inputstr: str):
-        x = self.embed(self.tokenizer.encode(inputstr))  # is now n_c by d_model
+    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+        # token_ids: [T]
+        if token_ids.dtype != torch.long:
+            token_ids = token_ids.long()
 
+        x = self.embed(token_ids)   # [T, d_model]
         for block in self.blocks:
-            x = block(x)        # still [B, T, D] also does basically x = block.forward(x) 
+            x = block(x)            # [T, d_model]
 
-        x = self.ln_f(x) # normalize the output
-        logits = self.unembed(x)  # [B, T, V] 
-        # for each token position, produce a score for every possible vocabulary token
+        x = self.ln_f(x)
+        logits = self.unembed(x)    # [T, d_vocab]
         return logits
+
 
 class Embedding(nn.Module):
     def __init__(self, config: Config, d_vocab: int):
@@ -210,3 +214,79 @@ class MLP(nn.Module):
         # the result of this is a vector of real numbers that has d_model number of elements
         return x # return the vector that is d_model long (per token basis)
 
+@torch.no_grad()
+def generate_greedy(model, prompt_tokens, max_new_tokens=50):
+    model.eval()
+    tokens = prompt_tokens  # [T]
+
+    for _ in range(max_new_tokens):
+        logits = model(tokens)          # [T, V]
+        next_logits = logits[-1, :]     # [V]
+        next_token = torch.argmax(next_logits, dim=-1)  # scalar
+        tokens = torch.cat([tokens, next_token.view(1)], dim=0)  # append to [T]
+    return tokens
+
+def top_k_filter(logits, k):
+    """
+    logits: [V]
+    keeps only top-k logits per batch row; sets the rest to -inf
+    """
+    if k is None or k <= 0:
+        return logits
+
+    V = logits.size(-1)
+    k = min(k, V)  # make sure k is not bigger than vocab size
+
+    topk_vals, _ = torch.topk(logits, k, dim=-1)
+    cutoff = topk_vals[-1].unsqueeze(-1)  # [1]
+    return logits.masked_fill(logits < cutoff, float("-inf"))
+
+
+@torch.no_grad()
+def generate_sample(model, prompt_tokens, max_new_tokens=50, temperature=1.0, top_k=None):
+
+    model.eval()
+    tokens = prompt_tokens
+
+    for _ in range(max_new_tokens):
+        logits = model(tokens)                 # [ T, V]
+        next_logits = logits[ -1, :]         # [ V]
+
+        # temperature scaling
+        next_logits = next_logits / max(temperature, 1e-8)
+
+        # optional top-k
+        next_logits = top_k_filter(next_logits, top_k)
+
+        probs = F.softmax(next_logits, dim=-1)          # [ V]
+        next_token = torch.multinomial(probs, num_samples=1)  # [ 1]
+
+        tokens = torch.cat([tokens, next_token], dim=0)
+
+    return tokens
+
+prompt = "Once upon a time I looked into a tree or bush"
+
+config = Config(
+    d_model=256,
+    d_hidden=1024,
+    d_head=64,
+    n_heads=4,
+    num_blocks=4,
+    d_vocab=0,   # not used (vocab comes from tokenizer)
+)
+
+model = Transformer(config, prompt)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+prompt_tokens = torch.tensor(model.tokenizer.encode(prompt), dtype=torch.long, device=device)
+
+out1 = generate_sample(model, prompt_tokens, max_new_tokens=60, temperature=0.8, top_k=50)
+
+out_tokens = generate_greedy(model, prompt_tokens, max_new_tokens=50)
+
+print(model.tokenizer.decode(out_tokens.tolist()))
+
+print(model.tokenizer.decode(out1.tolist()))
