@@ -72,7 +72,7 @@ class Attention_head(nn.Module):
         self.d_model = config.d_model
 
         # Learned projection matrices
-        self.W_q = nn.Linear(config.d_model, config.d_model, bias=False)
+        self.W_q = nn.Linear(config.d_model, config.d_model, bias=False) 
         self.W_k = nn.Linear(config.d_model, config.d_model, bias=False)
         self.W_v = nn.Linear(config.d_model, config.d_model, bias=False)
         # all of these matricies are d_model by d_model and don't have the bias vector, so when self.W_q(stuff) will multiply the matrix of stuff by the square matrix of W_q
