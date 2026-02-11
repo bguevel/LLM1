@@ -9,6 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 import re
 import json
 from pathlib import Path
+import os
 
 
 @dataclass
@@ -32,18 +33,20 @@ class Transformer(nn.Module):
         self.unembed = nn.Linear(config.d_model, d_vocab)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
-        # token_ids: [T]
-        if token_ids.dtype != torch.long:
-            token_ids = token_ids.long()
+        # token_ids: [B, T] OR [T]
 
-        x = self.embed(token_ids)   # [T, d_model]
+        if token_ids.dim() == 1:
+            token_ids = token_ids.unsqueeze(0)  # make [1, T] so that a single sequence is a size 1 batch
+
+        x = self.embed(token_ids)  # [B, T, D]
+
         for block in self.blocks:
-            x = block(x)            # [T, d_model]
+            x = block(x)
 
         x = self.ln_f(x)
-        logits = self.unembed(x)    # [T, d_vocab]
-        return logits
+        logits = self.unembed(x)  # [B, T, V]
 
+        return logits
 
 class Embedding(nn.Module):
     def __init__(self, config: Config, d_vocab: int):
@@ -73,7 +76,7 @@ class WordTokenizer:
 
     def normalize(self, text: str) -> str:
         text = text.lower()
-        text = re.sub(r"[^\w\s]", "", text)
+        text = re.sub(r"[^'\w\s]", "", text)
         return text
 
     def add_text(self, text: str) -> None:
@@ -143,11 +146,13 @@ class TransformerBlock(nn.Module):
 class Attention_head(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
+        self.n_heads = config.n_heads
+        self.d_head = config.d_head
+        self.d_model = config.d_model
         ''' for single head use this:
-        self.W_q = nn.Linear(config.d_model, config.d_head, bias=False)
-        self.W_k = nn.Linear(config.d_model, config.d_head, bias=False)
-        self.W_v = nn.Linear(config.d_model, config.d_head, bias=False)
-        self.W_o = nn.Linear(config.d_head, config.d_model, bias=False)
+        self.W_q = nn.Linear(d_model, d_head, bias=False)
+        self.W_k = nn.Linear(d_model, d_head, bias=False)
+        self.W_v = nn.Linear(d_model, d_head, bias=False)
         '''
         #this is multi head 
         self.W_q = nn.Linear(config.d_model, config.n_heads * config.d_head, bias=False)
@@ -158,35 +163,47 @@ class Attention_head(nn.Module):
         # the multi head allows for much more relationship building between tokens, ex grammar and semantic similarity if n_heads is 2
         # why is n_heads*d_head=d_model?
         # this is because we are basically so that we can compare different learned projections of the tokens to each other, to gain more context
-    def forward(self, x: torch.tensor):
-        T, D = x.shape # shape of n_c by d_m T=n_c and D=d_model
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: [B, T, d_model]
+        returns: [B, T, d_model]
+        """
+        if x.dim() == 2:
+            x = x.unsqueeze(0)  # allow [T, D] -> [1, T, D]
+
+        B, T, D = x.shape
+        H, Dh = self.n_heads, self.d_head
+
+        # 1) Compute Q,K,V: [B, T, H*Dh]
         Q = self.W_q(x)
-        # (B·T × D)  @  (D × D)  →  (B·T × D)
-        # Then PyTorch reshapes the result back to: B × T × D
-        K = self.W_k(x)  
-        V = self.W_v(x)  
+        K = self.W_k(x)
+        V = self.W_v(x)
 
-        # 2) Compute attention scores (dot products)
-        # scores[t, s] = Q[b,t] · K[b,s]
-        # transpose(-2, -1) swaps the last two dimensions
-        scores = Q @ K.transpose(-2, -1) 
+        # 2) Reshape to heads: [B, H, T, Dh]
+        Q = Q.view(B, T, H, Dh).transpose(1, 2)  # [B, H, T, Dh]
+        K = K.view(B, T, H, Dh).transpose(1, 2)  # [B, H, T, Dh]
+        V = V.view(B, T, H, Dh).transpose(1, 2)  # [B, H, T, Dh]
 
-        # each entry in scores is dot(Q[b,t], K[b,s])
-        # How much should token t pay attention to token s? is what is being calculated
-        scores = scores / math.sqrt(D) # need to normalize the values before applying the softmax function so that it doesn't struggle with potential very large values
-        # after this line every token has compared itself to every other token
+        # 3) Attention scores: [B, H, T, T]
+        scores = Q @ K.transpose(-2, -1)  # [B, H, T, T]
+        scores = scores / math.sqrt(Dh)   # scale by d_head (not d_model)
 
+        # 4) Causal mask: block attending to future tokens
+        # mask shape [T, T] broadcasts to [B, H, T, T]
         mask = torch.triu(torch.ones(T, T, device=x.device, dtype=torch.bool), diagonal=1)
         scores = scores.masked_fill(mask, float("-inf"))
 
-         # 4) Softmax over "which source position s to attend to"
-        attn = torch.softmax(scores, dim=-1)  # [B, T, T]
+        # 5) Softmax -> attention weights
+        attn = torch.softmax(scores, dim=-1)  # [B, H, T, T]
 
-        # 5) Weighted sum of values
-        out = attn @ V  # [B, T, D]
+        # 6) Weighted sum of values -> [B, H, T, Dh]
+        out = attn @ V  # [B, H, T, Dh]
 
-        # 6) Output projection
-        out = self.W_o(out)  # [B, T, D]
+        # 7) Merge heads back: [B, T, H*Dh]
+        out = out.transpose(1, 2).contiguous().view(B, T, H * Dh)
+
+        # 8) Output projection -> [B, T, d_model]
+        out = self.W_o(out)
         return out
     
 class MLP(nn.Module):
@@ -264,8 +281,62 @@ def generate_sample(model, prompt_tokens, max_new_tokens=50, temperature=1.0, to
         tokens = torch.cat([tokens, next_token], dim=0)
 
     return tokens
+def train(model, dataloader, epochs=5, lr=3e-4, device="cpu", grad_clip=1.0):
+    model.to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 
-prompt = "Once upon a time I looked into a tree or bush"
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0.0
+
+        for x, y in dataloader:
+            # x, y: [B, T]
+            x = x.to(device).long()
+            y = y.to(device).long()
+
+            logits = model(x)  # should be [B, T, V] or [B*T, V]
+
+            # Ensure logits are [B, T, V]
+            if logits.dim() == 2:
+                # If your model returns [T, V] for a single sequence,
+                # it won't match batching. You should fix model forward.
+                raise ValueError(f"Model returned shape {logits.shape}; expected [B, T, V].")
+
+            B, T, V = logits.shape
+
+            # Cross entropy wants [N, C] and [N]
+            loss = F.cross_entropy(
+                logits.reshape(B * T, V),
+                y.reshape(B * T),
+            )
+
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+
+            if grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        avg_loss = total_loss / len(dataloader)
+        print(f"epoch {epoch+1}/{epochs} | loss {avg_loss:.4f}")
+
+class NextTokenDataset(Dataset):
+    def __init__(self, token_ids, seq_len=32):
+        self.tokens = torch.tensor(token_ids, dtype=torch.long)
+        self.seq_len = seq_len
+
+    def __len__(self):
+        return len(self.tokens) - self.seq_len - 1
+
+    def __getitem__(self, idx):
+        x = self.tokens[idx : idx + self.seq_len]                 # [T]
+        y = self.tokens[idx + 1 : idx + self.seq_len + 1]         # [T]
+        return x, y
+
+prompt = "I have no idea what text I am going to put here to train this model, I really don't fully understand what the training is doing yet"
 
 config = Config(
     d_model=256,
@@ -283,10 +354,32 @@ model.to(device)
 
 prompt_tokens = torch.tensor(model.tokenizer.encode(prompt), dtype=torch.long, device=device)
 
-out1 = generate_sample(model, prompt_tokens, max_new_tokens=60, temperature=0.8, top_k=50)
+model.state_dict()
 
-out_tokens = generate_greedy(model, prompt_tokens, max_new_tokens=50)
+#out1 = generate_sample(model, prompt_tokens, max_new_tokens=60, temperature=0.8, top_k=50)
 
-print(model.tokenizer.decode(out_tokens.tolist()))
+#out_tokens = generate_greedy(model, prompt_tokens, max_new_tokens=50)
 
-print(model.tokenizer.decode(out1.tolist()))
+#print(model.tokenizer.decode(out_tokens.tolist()))
+
+#print(model.tokenizer.decode(out1.tolist()))
+
+if os.path.exists("model_weights.pt"):
+    model.load_state_dict(torch.load("model_weights.pt", map_location=device))
+    print("Loaded existing weights.")
+else:
+    print("No saved weights found. Training from scratch.")
+
+text = "I have no idea what text I am going to put here to train this model, I really don't fully understand what the training is doing yet"
+token_ids = model.tokenizer.encode(text)
+seq_len = 32
+if len(token_ids) <= seq_len + 1:
+    seq_len = max(2, len(token_ids) - 2)
+print("using seq_len:", seq_len)
+
+dataset = NextTokenDataset(token_ids, seq_len)
+dataloader = DataLoader(dataset, batch_size=16, shuffle=True, drop_last=False)
+
+train(model, dataloader, epochs=5, lr=3e-4, device=device)
+
+torch.save(model.state_dict(), "model_weights.pt")
