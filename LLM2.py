@@ -36,15 +36,20 @@ class Transformer(nn.Module):
         # token_ids: [B, T] OR [T]
 
         if token_ids.dim() == 1:
+            print("what does this look like after the squeeze")
             token_ids = token_ids.unsqueeze(0)  # make [1, T] so that a single sequence is a size 1 batch
-
+            print(token_ids)
         x = self.embed(token_ids)  # [B, T, D]
-
+        print("what does x look like after the embedding")
+        print(x)
+        print(x.shape) #n_c by d_m
         for block in self.blocks:
             x = block(x)
 
         x = self.ln_f(x)
         logits = self.unembed(x)  # [B, T, V]
+        print("these are the logits after the transforming process")
+        print(logits)
 
         return logits
 
@@ -248,6 +253,7 @@ def top_k_filter(logits, k):
     logits: [V]
     keeps only top-k logits per batch row; sets the rest to -inf
     """
+    print("got into top-k")
     if k is None or k <= 0:
         return logits
 
@@ -255,8 +261,15 @@ def top_k_filter(logits, k):
     k = min(k, V)  # make sure k is not bigger than vocab size
 
     topk_vals, _ = torch.topk(logits, k, dim=-1)
+    print(topk_vals)
     cutoff = topk_vals[-1].unsqueeze(-1)  # [1]
-    return logits.masked_fill(logits < cutoff, float("-inf"))
+    print("this is the cutoff")
+    print(cutoff)
+    print("is it this line")
+    print(logits.shape)
+    print(cutoff.shape)
+    print(logits.masked_fill(logits < cutoff, float("-inf")) )
+    return logits.masked_fill(logits < cutoff, float("-inf")) 
 
 
 @torch.no_grad()
@@ -264,16 +277,22 @@ def generate_sample(model, prompt_tokens, max_new_tokens=50, temperature=1.0, to
 
     model.eval()
     tokens = prompt_tokens
+    print(prompt_tokens)
 
     for _ in range(max_new_tokens):
         logits = model(tokens)                 # [ T, V]
-        next_logits = logits[ -1, :]         # [ V]
+        
+        print(logits)
+        next_logits = logits[0, -1] # [V]
+        print(next_logits)
 
         # temperature scaling
         next_logits = next_logits / max(temperature, 1e-8)
+        print("got herre")
 
         # optional top-k
         next_logits = top_k_filter(next_logits, top_k)
+        print("here as well")
 
         probs = F.softmax(next_logits, dim=-1)          # [ V]
         next_token = torch.multinomial(probs, num_samples=1)  # [ 1]
@@ -337,7 +356,8 @@ class NextTokenDataset(Dataset):
         return x, y
 
 prompt = "I have no idea what text I am going to put here to train this model, I really don't fully understand what the training is doing yet"
-
+print("this is the prompt length")
+print(prompt.split().__len__())
 config = Config(
     d_model=256,
     d_hidden=1024,
@@ -351,35 +371,36 @@ model = Transformer(config, prompt)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
+token_ids = model.tokenizer.encode(prompt)
 
 prompt_tokens = torch.tensor(model.tokenizer.encode(prompt), dtype=torch.long, device=device)
 
 model.state_dict()
 
-#out1 = generate_sample(model, prompt_tokens, max_new_tokens=60, temperature=0.8, top_k=50)
+out1 = generate_sample(model, prompt_tokens, max_new_tokens=60, temperature=0.8, top_k=50)
 
-#out_tokens = generate_greedy(model, prompt_tokens, max_new_tokens=50)
+# out_tokens = generate_greedy(model, prompt_tokens, max_new_tokens=50)
 
 #print(model.tokenizer.decode(out_tokens.tolist()))
 
-#print(model.tokenizer.decode(out1.tolist()))
+print(model.tokenizer.decode(out1.tolist()))
 
-if os.path.exists("model_weights.pt"):
-    model.load_state_dict(torch.load("model_weights.pt", map_location=device))
-    print("Loaded existing weights.")
-else:
-    print("No saved weights found. Training from scratch.")
+# if os.path.exists("model_weights.pt"):
+#     model.load_state_dict(torch.load("model_weights.pt", map_location=device))
+#     print("Loaded existing weights.")
+# else:
+#     print("No saved weights found. Training from scratch.")
 
-text = "I have no idea what text I am going to put here to train this model, I really don't fully understand what the training is doing yet"
-token_ids = model.tokenizer.encode(text)
-seq_len = 32
-if len(token_ids) <= seq_len + 1:
-    seq_len = max(2, len(token_ids) - 2)
-print("using seq_len:", seq_len)
+# text = "I have no idea what text I am going to put here to train this model, I really don't fully understand what the training is doing yet"
+# token_ids = model.tokenizer.encode(text)
+# seq_len = 32
+# if len(token_ids) <= seq_len + 1:
+#     seq_len = max(2, len(token_ids) - 2)
+# print("using seq_len:", seq_len)
 
-dataset = NextTokenDataset(token_ids, seq_len)
-dataloader = DataLoader(dataset, batch_size=16, shuffle=True, drop_last=False)
+# dataset = NextTokenDataset(token_ids, seq_len)
+# dataloader = DataLoader(dataset, batch_size=16, shuffle=True, drop_last=False)
 
-train(model, dataloader, epochs=5, lr=3e-4, device=device)
+# train(model, dataloader, epochs=5, lr=3e-4, device=device)
 
-torch.save(model.state_dict(), "model_weights.pt")
+# torch.save(model.state_dict(), "model_weights.pt")
