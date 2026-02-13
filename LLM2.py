@@ -39,7 +39,7 @@ class Transformer(nn.Module):
             print("what does this look like after the squeeze")
             token_ids = token_ids.unsqueeze(0)  # make [1, T] so that a single sequence is a size 1 batch
             print(token_ids)
-        x = self.embed(token_ids)  # [B, T, D]
+        x = self.embed(token_ids)  # [B, T, D] so has Batch number of token rows (token # = length of sequence) D is d model
         print("what does x look like after the embedding")
         print(x)
         print(x.shape) #n_c by d_m
@@ -81,7 +81,7 @@ class WordTokenizer:
 
     def normalize(self, text: str) -> str:
         text = text.lower()
-        text = re.sub(r"[^'\w\s]", "", text)
+        text = re.sub(r"[^.,'\w\s]", "", text)
         return text
 
     def add_text(self, text: str) -> None:
@@ -281,9 +281,10 @@ def generate_sample(model, prompt_tokens, max_new_tokens=50, temperature=1.0, to
 
     for _ in range(max_new_tokens):
         logits = model(tokens)                 # [ T, V]
-        
+        print("printing logits")
         print(logits)
         next_logits = logits[0, -1] # [V]
+        print("printing next_logits")
         print(next_logits)
 
         # temperature scaling
@@ -355,7 +356,7 @@ class NextTokenDataset(Dataset):
         y = self.tokens[idx + 1 : idx + self.seq_len + 1]         # [T]
         return x, y
 
-prompt = "I have no idea what text I am going to put here to train this model, I really don't fully understand what the training is doing yet"
+prompt = "Here’s a cohesive continuation that keeps the reflective tone and flows naturally: I have no idea what text I am going to put here to train this model. I really don't fully understand what the training is doing yet, but I know that somewhere inside all of these numbers and matrix multiplications, patterns are slowly forming. The model does not understand meaning the way I do; instead, it adjusts tiny weights so that the next word becomes slightly more predictable than before. Every sentence I write becomes part of a statistical landscape where relationships between words are mapped into vectors and compared through attention mechanisms. Right now, this text is simple and repetitive, but that is fine. The purpose is not to create great literature. The purpose is to provide structure — sequences of words that follow other words in ways that are consistent enough for the model to detect patterns. If I write about curiosity, confusion, learning, and persistence, the model will begin to associate those ideas through proximity and repetition. Training is really just optimization. The model makes a guess about the next token, compares it to the correct answer, computes a loss value, and then nudges its parameters in a direction that slightly reduces that loss. It repeats this process thousands or millions of times. Over time, these tiny nudges accumulate into something that appears intelligent, even though at its core it is just probability shaped by gradient descent. So even if I do not fully understand every internal detail yet, I can understand the high-level idea: exposure to structured text allows the system to compress patterns into weights. And maybe, as I continue building and experimenting, I will understand more of what is happening beneath the surface."
 print("this is the prompt length")
 print(prompt.split().__len__())
 config = Config(
@@ -363,7 +364,7 @@ config = Config(
     d_hidden=1024,
     d_head=64,
     n_heads=4,
-    num_blocks=4,
+    num_blocks=14,
     d_vocab=0,   # not used (vocab comes from tokenizer)
 )
 
