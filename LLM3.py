@@ -2,20 +2,14 @@ from dataclasses import dataclass
 import torch
 import math
 import torch.nn as nn
-from jaxtyping import Float, Int
 import torch.nn.functional as F
-from transformers import AutoTokenizer
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 import re
-import json
-from pathlib import Path
 import os
 import time
-import csv
 import requests
-from bs4 import BeautifulSoup
 from typing import Optional
-
+CHECKPOINT_PATH = "checkpoint.pt"
 
 
 @dataclass
@@ -360,10 +354,20 @@ def train(
     save_checkpoint(model, config, "checkpoint.pt")
 
 
-def load_weights_if_present(model: Transformer, device: str, path: str = "checkpoint.pt") -> bool:
-    ok = load_checkpoint(model, path=path, device=device)
-    print("Loaded existing checkpoint." if ok else "No checkpoint found. Training from scratch.")
-    return ok
+def load_weights_if_present(model: Transformer, device: str, path: str = CHECKPOINT_PATH) -> bool:
+    loaded = load_checkpoint(path=path, device=device)
+    if loaded is None:
+        print("No checkpoint found. Training from scratch.")
+        return False
+
+    loaded_model, loaded_config = loaded
+
+    # Copy weights + tokenizer into existing model
+    model.load_state_dict(loaded_model.state_dict())
+    model.tokenizer = loaded_model.tokenizer
+
+    print("Loaded existing checkpoint.")
+    return True
     
 def GenerateResponse(prompt: str, config: Config, new_tokens: int, temp: float, top_k: int, model: Transformer):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -602,6 +606,7 @@ def interactive_prompt_loop(
         model.resize_vocab(model.tokenizer.vocab_size)
 
         prompt_tokens = torch.tensor(ids, dtype=torch.long, device=device)
+
         out = generate_sample(
             model,
             prompt_tokens,
@@ -609,8 +614,10 @@ def interactive_prompt_loop(
             temperature=temp,
             top_k=top_k,
         )
-        print(model.tokenizer.decode(out.tolist()))
-        print()
+
+        # Only decode newly generated tokens
+        generated_ids = out[len(ids):]   # slice off prompt
+        print(model.tokenizer.decode(generated_ids.tolist()))
 
 
 def main():
@@ -649,7 +656,6 @@ def main():
             interactive_prompt_loop(model, config, device)
         else:
             print("[warn] invalid selection")
-CHECKPOINT_PATH = "checkpoint.pt"
 
 def save_checkpoint(model: Transformer, config: Config, path: str = CHECKPOINT_PATH):
     ckpt = {
