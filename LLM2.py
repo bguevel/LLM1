@@ -10,8 +10,14 @@ import re
 import json
 from pathlib import Path
 import os
+import time
+import csv
+import requests
+from bs4 import BeautifulSoup
 
-
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; MyScraper/1.0; +https://example.com/bot)"
+}
 @dataclass
 class Config: #nodes of the network
     d_model: int # this is the internal language of the network
@@ -36,20 +42,20 @@ class Transformer(nn.Module):
         # token_ids: [B, T] OR [T]
 
         if token_ids.dim() == 1:
-            print("what does this look like after the squeeze")
+            #print("what does this look like after the squeeze")
             token_ids = token_ids.unsqueeze(0)  # make [1, T] so that a single sequence is a size 1 batch
-            print(token_ids)
+            #print(token_ids)
         x = self.embed(token_ids)  # [B, T, D] so has Batch number of token rows (token # = length of sequence) D is d model
-        print("what does x look like after the embedding")
-        print(x)
-        print(x.shape) #n_c by d_m
+        #print("what does x look like after the embedding")
+        #print(x)
+        #print(x.shape) #n_c by d_m
         for block in self.blocks:
             x = block(x)
 
         x = self.ln_f(x)
         logits = self.unembed(x)  # [B, T, V]
-        print("these are the logits after the transforming process")
-        print(logits)
+        #print("these are the logits after the transforming process")
+        #print(logits)
 
         return logits
 
@@ -81,15 +87,16 @@ class WordTokenizer:
 
     def normalize(self, text: str) -> str:
         text = text.lower()
-        text = re.sub(r"[^.,'\w\s]", "", text)
+        text = re.findall(r"\w+(?:'\w+)?|[,.\"()!?-]", text)
         return text
 
     def add_text(self, text: str) -> None:
-        for w in self.normalize(text).split():
+        for w in self.normalize(text):
+            #print("adding work")
+            #print(w)
             self.add_word(w)
 
     def add_word(self, word: str) -> int:
-        word = self.normalize(word)
         if word in self.stoi:
             return self.stoi[word]
         new_id = len(self.stoi)
@@ -99,7 +106,7 @@ class WordTokenizer:
 
     def encode(self, text: str) -> list[int]:
         ids: list[int] = []
-        for w in self.normalize(text).split():
+        for w in self.normalize(text):
             if w in self.stoi:
                 ids.append(self.stoi[w])
             else:
@@ -253,7 +260,7 @@ def top_k_filter(logits, k):
     logits: [V]
     keeps only top-k logits per batch row; sets the rest to -inf
     """
-    print("got into top-k")
+    #print("got into top-k")
     if k is None or k <= 0:
         return logits
 
@@ -261,14 +268,14 @@ def top_k_filter(logits, k):
     k = min(k, V)  # make sure k is not bigger than vocab size
 
     topk_vals, _ = torch.topk(logits, k, dim=-1)
-    print(topk_vals)
+    #print(topk_vals)
     cutoff = topk_vals[-1].unsqueeze(-1)  # [1]
-    print("this is the cutoff")
-    print(cutoff)
-    print("is it this line")
-    print(logits.shape)
-    print(cutoff.shape)
-    print(logits.masked_fill(logits < cutoff, float("-inf")) )
+    #print("this is the cutoff")
+    #print(cutoff)
+    #print("is it this line")
+    #print(logits.shape)
+    #print(cutoff.shape)
+    #print(logits.masked_fill(logits < cutoff, float("-inf")) )
     return logits.masked_fill(logits < cutoff, float("-inf")) 
 
 
@@ -277,23 +284,23 @@ def generate_sample(model, prompt_tokens, max_new_tokens=50, temperature=1.0, to
 
     model.eval()
     tokens = prompt_tokens
-    print(prompt_tokens)
+    #print(prompt_tokens)
 
     for _ in range(max_new_tokens):
         logits = model(tokens)                 # [ T, V]
-        print("printing logits")
-        print(logits)
+        #print("printing logits")
+        #print(logits)
         next_logits = logits[0, -1] # [V]
-        print("printing next_logits")
-        print(next_logits)
+        #print("printing next_logits")
+        #print(next_logits)
 
         # temperature scaling
         next_logits = next_logits / max(temperature, 1e-8)
-        print("got herre")
+        #print("got herre")
 
         # optional top-k
         next_logits = top_k_filter(next_logits, top_k)
-        print("here as well")
+        #print("here as well")
 
         probs = F.softmax(next_logits, dim=-1)          # [ V]
         next_token = torch.multinomial(probs, num_samples=1)  # [ 1]
@@ -301,8 +308,20 @@ def generate_sample(model, prompt_tokens, max_new_tokens=50, temperature=1.0, to
         tokens = torch.cat([tokens, next_token], dim=0)
 
     return tokens
-def train(model, dataloader, epochs=5, lr=3e-4, device="cpu", grad_clip=1.0):
+def train( epochs: int, lr: Float, device: str, grad_clip, prompt: str, config: Config):
+    model = Transformer(config, prompt)
     model.to(device)
+    if os.path.exists("model_weights.pt"):
+        model.load_state_dict(torch.load("model_weights.pt", map_location=device))
+        print("Loaded existing weights.")
+    else:
+        print("No saved weights found. Training from scratch.")
+    
+    token_ids = model.tokenizer.encode(prompt)
+    seq_len = len(token_ids)-1
+    dataset = NextTokenDataset(token_ids, seq_len)
+    dataloader = DataLoader(dataset, batch_size=16, shuffle=True, drop_last=False)
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 
     for epoch in range(epochs):
@@ -342,23 +361,55 @@ def train(model, dataloader, epochs=5, lr=3e-4, device="cpu", grad_clip=1.0):
 
         avg_loss = total_loss / len(dataloader)
         print(f"epoch {epoch+1}/{epochs} | loss {avg_loss:.4f}")
+        torch.save(model.state_dict(), "model_weights.pt")
 
-class NextTokenDataset(Dataset):
-    def __init__(self, token_ids, seq_len=32):
-        self.tokens = torch.tensor(token_ids, dtype=torch.long)
+class NextTokenDataset(torch.utils.data.Dataset):
+    def __init__(self, token_ids, seq_len):
+        self.token_ids = token_ids
         self.seq_len = seq_len
 
     def __len__(self):
-        return len(self.tokens) - self.seq_len - 1
+        # number of (x,y) windows available
+        n = len(self.token_ids) - self.seq_len
+        return max(0, n)
 
     def __getitem__(self, idx):
-        x = self.tokens[idx : idx + self.seq_len]                 # [T]
-        y = self.tokens[idx + 1 : idx + self.seq_len + 1]         # [T]
+        x = torch.tensor(self.token_ids[idx: idx + self.seq_len], dtype=torch.long)
+        y = torch.tensor(self.token_ids[idx + 1: idx + self.seq_len + 1], dtype=torch.long)
         return x, y
+    
+def GenerateResponse(prompt: str, config: Config, new_tokens: int, temp: Float, top_k: int):
+    model = Transformer(config, prompt)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if os.path.exists("model_weights.pt"):
+        model.load_state_dict(torch.load("model_weights.pt", map_location=device))
+        print("Loaded existing weights.")
+    else:
+        print("No saved weights found. Training from scratch.")
+    token_ids = model.tokenizer.encode(prompt)
+    model.to(device)
 
-prompt = "Here’s a cohesive continuation that keeps the reflective tone and flows naturally: I have no idea what text I am going to put here to train this model. I really don't fully understand what the training is doing yet, but I know that somewhere inside all of these numbers and matrix multiplications, patterns are slowly forming. The model does not understand meaning the way I do; instead, it adjusts tiny weights so that the next word becomes slightly more predictable than before. Every sentence I write becomes part of a statistical landscape where relationships between words are mapped into vectors and compared through attention mechanisms. Right now, this text is simple and repetitive, but that is fine. The purpose is not to create great literature. The purpose is to provide structure — sequences of words that follow other words in ways that are consistent enough for the model to detect patterns. If I write about curiosity, confusion, learning, and persistence, the model will begin to associate those ideas through proximity and repetition. Training is really just optimization. The model makes a guess about the next token, compares it to the correct answer, computes a loss value, and then nudges its parameters in a direction that slightly reduces that loss. It repeats this process thousands or millions of times. Over time, these tiny nudges accumulate into something that appears intelligent, even though at its core it is just probability shaped by gradient descent. So even if I do not fully understand every internal detail yet, I can understand the high-level idea: exposure to structured text allows the system to compress patterns into weights. And maybe, as I continue building and experimenting, I will understand more of what is happening beneath the surface."
-print("this is the prompt length")
-print(prompt.split().__len__())
+    prompt_tokens = torch.tensor(model.tokenizer.encode(prompt), dtype=torch.long, device=device)
+
+    out1 = generate_sample(model, prompt_tokens, new_tokens, temp, top_k)
+
+    print(model.tokenizer.decode(out1.tolist()))
+
+def scrape_page(url: str):
+    r = requests.get(url, headers=HEADERS, timeout=20)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    # Example: extract all article titles + links
+    items = []
+    for a in soup.select():  # <-- change CSS selector for the site
+        title = a.get_text(strip=True)
+        link = a.get("href")
+
+    return items
+
+
+prompt = "Hi this an addition to the string."
 config = Config(
     d_model=256,
     d_hidden=1024,
@@ -367,41 +418,6 @@ config = Config(
     num_blocks=14,
     d_vocab=0,   # not used (vocab comes from tokenizer)
 )
+#GenerateResponse(prompt, config, 20, 0.7, 50)
 
-model = Transformer(config, prompt)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.to(device)
-token_ids = model.tokenizer.encode(prompt)
-
-prompt_tokens = torch.tensor(model.tokenizer.encode(prompt), dtype=torch.long, device=device)
-
-model.state_dict()
-
-out1 = generate_sample(model, prompt_tokens, max_new_tokens=60, temperature=0.8, top_k=50)
-
-# out_tokens = generate_greedy(model, prompt_tokens, max_new_tokens=50)
-
-#print(model.tokenizer.decode(out_tokens.tolist()))
-
-print(model.tokenizer.decode(out1.tolist()))
-
-# if os.path.exists("model_weights.pt"):
-#     model.load_state_dict(torch.load("model_weights.pt", map_location=device))
-#     print("Loaded existing weights.")
-# else:
-#     print("No saved weights found. Training from scratch.")
-
-# text = "I have no idea what text I am going to put here to train this model, I really don't fully understand what the training is doing yet"
-# token_ids = model.tokenizer.encode(text)
-# seq_len = 32
-# if len(token_ids) <= seq_len + 1:
-#     seq_len = max(2, len(token_ids) - 2)
-# print("using seq_len:", seq_len)
-
-# dataset = NextTokenDataset(token_ids, seq_len)
-# dataloader = DataLoader(dataset, batch_size=16, shuffle=True, drop_last=False)
-
-# train(model, dataloader, epochs=5, lr=3e-4, device=device)
-
-# torch.save(model.state_dict(), "model_weights.pt")
+train(100, 0.0005, "cpu", 1.0, prompt, config)
