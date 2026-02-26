@@ -10,7 +10,6 @@ import torch
 import math
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoTokenizer
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 import requests
@@ -227,8 +226,9 @@ class TransformerBlock(nn.Module):
         # attention feeds into mlp
         attention_out = self.attention(x)
         x = attention_out
+        x = x + attention_out
         mlp_out = self.mlp(x)
-        transformer_x = mlp_out
+        transformer_x = x + mlp_out
         return transformer_x
     
 
