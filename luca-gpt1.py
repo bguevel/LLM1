@@ -225,7 +225,6 @@ class TransformerBlock(nn.Module):
     def forward(self, x):
         # attention feeds into mlp
         attention_out = self.attention(x)
-        x = attention_out
         x = x + attention_out
         mlp_out = self.mlp(x)
         transformer_x = x + mlp_out
