@@ -16,3 +16,14 @@ the fly. This came with a whole host of challenges as the embedding depends on t
 edit the embedding.
 
 For the future we would look into byte encoding, and maybe a few other possible avenues.
+
+trained output:
+prompt> Hello there how are you
+a . is is used a is a and transformer computer of how the . the behavior achieving more structured general signal and . 
+questions that topics physical of units is the . participated mechanics the and of functional . of supports , intelligence ,
+ of pursuit topics fundamental summary
+
+untrained output:
+prompt> Hello there how are you
+you seed seed there seed you you seed seed there how there seed how are hello are seed there there seed seed seed seed you 
+seed you how hello how how there seed seed seed seed seed you seed there there hello there seed seed how are you how are
