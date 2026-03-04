@@ -9,6 +9,7 @@ import os
 import time
 import requests
 from typing import Optional
+import matplotlib.pyplot as plt
 
 CHECKPOINT_PATH = "checkpoint.pt"
 
@@ -270,12 +271,14 @@ def train(
     seq_len = len(token_ids) - 1
     if seq_len <= 0:
         print("[warn] prompt too short to train on.")
-        return
+        return []
 
     dataset = NextTokenDataset(token_ids, seq_len)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+
+    epoch_losses: list[float] = []
 
     for epoch in range(epochs):
         model.train()
@@ -299,10 +302,13 @@ def train(
             total_loss += loss.item()
 
         avg_loss = total_loss / max(1, len(dataloader))
+        epoch_losses.append(avg_loss)
         print(f"epoch {epoch+1}/{epochs} | loss {avg_loss:.4f}")
 
     if save_path:
         save_checkpoint(model, config, save_path)
+
+    return epoch_losses
 
 
 def load_weights_if_present(model: Transformer, device: str, path: Optional[str]) -> bool:
@@ -349,16 +355,19 @@ def train_from_wiki_titles_file(
     model: Transformer,
     config: Config,
     device: str,
-    checkpoint_path: str,
+    checkpoint_path: str | None,
     epochs_per_page: int = 100,
     lr: float = 5e-4,
     grad_clip: float | None = 1.0,
     sleep_s: float = 0.5,
     skip_disambiguation: bool = True,
     min_chars: int = 50,
+    graph_loss: int = 0,
 ):
     titles = read_titles_from_file(titles_file)
     print(f"Found {len(titles)} titles in {titles_file}")
+
+    losses_by_title: dict[str, list[float]] = {}
 
     for i, title in enumerate(titles, start=1):
         print(f"\n[{i}/{len(titles)}] {title}")
@@ -381,7 +390,7 @@ def train_from_wiki_titles_file(
 
         prompt = f"Title: {data.get('title', title)}.\nSummary: {extract}\n"
 
-        train(
+        epoch_losses = train(
             epochs=epochs_per_page,
             lr=lr,
             device=device,
@@ -392,9 +401,30 @@ def train_from_wiki_titles_file(
             save_path=checkpoint_path,
         )
 
+        if graph_loss == 1:
+            losses_by_title[title] = epoch_losses
+
         if sleep_s and sleep_s > 0:
             time.sleep(sleep_s)
 
+    if graph_loss == 1 and losses_by_title:
+        plt.figure()
+        for title, losses in losses_by_title.items():
+            if not losses:
+                continue
+            x = list(range(1, len(losses) + 1))
+            plt.plot(x, losses, label=title)
+
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("Loss vs Epochs (one line per article)")
+        if len(losses_by_title) <= 12:
+            plt.legend()
+        filename = f"loss_plot_{int(time.time())}.png"
+        plt.savefig(filename, dpi=300, bbox_inches="tight")
+        print(f"Saved plot to {filename}")
+        plt.show()
+        plt.close()
     return model
 
 
@@ -428,6 +458,7 @@ def training_menu(model: Transformer, config: Config, device: str, checkpoint_pa
             lr = float(input("learning rate (e.g. 0.0005)> ").strip() or "0.0005")
             grad_clip = float(input("grad clip (e.g. 1.0, blank for none)> ").strip() or "1.0")
             sleep_s = float(input("sleep seconds between requests (e.g. 0.5)> ").strip() or "0.5")
+            graph_loss = int(input("graph loss per article? (1 for plots 0 for no plots generated) (1/0)> ").strip() or "0")
 
             train_from_wiki_titles_file(
                 titles_file=titles_file,
@@ -439,6 +470,7 @@ def training_menu(model: Transformer, config: Config, device: str, checkpoint_pa
                 lr=lr,
                 grad_clip=grad_clip,
                 sleep_s=sleep_s,
+                graph_loss=graph_loss,
             )
 
             print("[ok] Finished training on Wikipedia titles.")
@@ -575,7 +607,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     load_in = input("Weights file to load (blank = don't load)> ").strip()
-    save_in = input(f"Weights file to save to (blank = don't save)> ").strip()
+    save_in = input("Weights file to save to (blank = don't save)> ").strip()
 
     load_path = load_in if load_in else None
     save_path = save_in if save_in else None
