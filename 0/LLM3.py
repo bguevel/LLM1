@@ -153,7 +153,7 @@ class Transformer(nn.Module):
         self.embed = Embedding(config, d_vocab)
 
         # Positional embedding stuff
-        self.max_seq_len = 20000  # raise this if you train on longer sequences
+        self.max_seq_len = 200000  # raise this if you train on longer sequences
         self.pos_emb = nn.Embedding(self.max_seq_len, config.d_model)
 
         self.blocks = nn.ModuleList([TransformerBlock(config) for _ in range(config.num_blocks)])
