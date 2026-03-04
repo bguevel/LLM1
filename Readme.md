@@ -99,6 +99,11 @@ We use a **word-level tokenizer** and a vocabulary that **expands as new words a
 **Key challenge:** the embedding/unembedding layers depend on the vocabulary size.  
 As the vocab grows, we must resize these layers while preserving the learned weights for existing tokens. A significant portion of debugging and development time went into making the training loop and embedding resizing stable.
 
+## Design choices (luca-gpt1)
+
+### Single-head attention
+Luca chose **single-head self-attention** for the `luca-gpt1` model for a faster training time and a lower memory usage. This implementation was much simpler and straightforward compared to the multi-head self-attention, but the model only learns one type of attention pattern at a time. Luca found that the attention mechanism was the most challenging part to design, as the math behind the matrix multiplication was the most complex part of the transformer implementation.
+
 ---
 
 ## Example outputs (trained vs. untrained)
