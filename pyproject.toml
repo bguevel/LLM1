@@ -57,10 +57,10 @@ lint = [
 default-groups = ["dev", "lint"]
 
 [project.urls]
-Homepage = "https://github.com/mines-opt-ml/decoding-gpt"
-Documentation = "https://github.com/mines-opt-ml/decoding-gpt"
-Repository = "https://github.com/mines-opt-ml/decoding-gpt"
-Issues = "https://github.com/mines-opt-ml/decoding-gpt/issues"
+Homepage = "https://github.com/bguevel/LLM1"
+Documentation = "https://github.com/bguevel/LLM1"
+Repository = "https://github.com/bguevel/LLM1"
+Issues = "https://github.com/bguevel/LLM1"
 
 # ruff config
 [tool.ruff]
