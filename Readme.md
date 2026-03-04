@@ -120,6 +120,18 @@ you seed seed there seed you you seed seed there how there seed how are hello ar
 seed you how hello how hello there seed seed seed seed seed you seed there there hello there seed seed how are you how are
 ```
 
+### Trained output (luca-gpt1)
+**Prompt:** `why is the sky blue`
+
+of the presence of his presence . begone , i should remain in agony and decisive . how was i engrossed much i am happy , and my ship . never in the most grateful little air and illuminate his composure . he did his eyes , and i was carried in the moment of my intellect . he could not prevail of what he had never down and wet branches . but when some airs , he showed signs
+
+### Untrained output (luca-gpt1)
+**Prompt:** `why is the sky blue`
+
+```
+impracticability pitchy betray turbulence feels purposes feel inexorable suspended colleges realities meed instigate prized drunken leaf agonising tools impracticable nourishment wakefield your career tend tormenting slow reply hovered aversion miracles questioned seeing undoubtedly their vast precipitate languor pleasant certainly shine sighed hatred cruel released incurable directed confirm comfort pronounced skin interrupted arteries behold white arrested specked families pursuits hear second brutality breezes render trickling thunderstorm figures majestic equals fancy deeper down internal impossibilities equally cologne agitated creaking vengeance outstript therefore
+```
+
 ---
 
 ## Training loss

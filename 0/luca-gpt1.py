@@ -14,6 +14,7 @@ import requests
 import numpy as np
 from jaxtyping import Float, Int
 from collections import Counter
+import matplotlib.pyplot as plt
 
 # ---------------------------------
 # 1. tokenizer and text processing
@@ -301,6 +302,9 @@ def train_transformer(log_interval=100):
     model.train()
     running_loss = 0.0
 
+    steps = []
+    losses = []
+
     for step, (inputs, labels) in enumerate(dataloader, start=1):
         inputs = inputs.to(device)           
         labels = labels.to(device)       
@@ -320,9 +324,25 @@ def train_transformer(log_interval=100):
 
         if step % log_interval == 0:
             print(f"step {step} loss: {running_loss / log_interval:.4f}")
+
+            steps.append(step)
+            losses.append(running_loss / log_interval)
+
             running_loss = 0.0
 
-train = train_transformer(log_interval=100)
+    return steps, losses
+
+steps, losses = train_transformer(log_interval=100)
+
+plt.figure()
+plt.plot(steps, losses)
+plt.xlabel("Training step")
+plt.ylabel(f"Average loss over {100} steps")
+plt.title("Training loss curve")
+filename = "luca_loss_plot.png"
+plt.savefig(filename, dpi=300, bbox_inches="tight")
+plt.show()
+plt.close()
 
 # ---------------------------------
 # 4. generate text
