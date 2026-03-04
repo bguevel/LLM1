@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 firstllm.egg-info/PKG-INFO
 firstllm.egg-info/SOURCES.txt
