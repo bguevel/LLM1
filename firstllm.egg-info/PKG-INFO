@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: firstllm
+Version: 0.1.0
+Summary: Custom transformer with dynamic vocab and Wikipedia training
+Author-email: Michael Ivanitskiy <mivanits@mines.edu>
+Project-URL: Homepage, https://github.com/mines-opt-ml/decoding-gpt
+Project-URL: Documentation, https://github.com/mines-opt-ml/decoding-gpt
+Project-URL: Repository, https://github.com/mines-opt-ml/decoding-gpt
+Project-URL: Issues, https://github.com/mines-opt-ml/decoding-gpt/issues
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+Requires-Dist: scipy
+Requires-Dist: ipython
+Requires-Dist: ipykernel
+Requires-Dist: ipywidgets
+Requires-Dist: torch
+Requires-Dist: torchvision
+Requires-Dist: jaxtyping
+Requires-Dist: transformer_lens
+Requires-Dist: muutils>=0.6.19
+Requires-Dist: zanj>=0.3.1
+Requires-Dist: trnbl>=0.0.2
+Requires-Dist: lmcat

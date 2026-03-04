@@ -1,0 +1,14 @@
+numpy
+matplotlib
+scipy
+ipython
+ipykernel
+ipywidgets
+torch
+torchvision
+jaxtyping
+transformer_lens
+muutils>=0.6.19
+zanj>=0.3.1
+trnbl>=0.0.2
+lmcat
