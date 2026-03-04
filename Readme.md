@@ -122,6 +122,14 @@ seed you how hello how hello there seed seed seed seed seed you seed there there
 
 ---
 
+## Training loss
+
+The following plot shows training loss over epochs (one line per Wikipedia article):
+
+![Loss vs Epochs (one line per article)](loss_plot_1772601295.png)
+
+---
+
 ## Contributions
 
 These projects were split across two tracks:
