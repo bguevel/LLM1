@@ -7,7 +7,9 @@ name = "firstllm"
 version = "0.1.0"
 description = "Custom transformer with dynamic vocab and Wikipedia training"
 authors = [
-	{ name = "Michael Ivanitskiy", email = "mivanits@mines.edu" },
+	{ name = "Ben Guevel", email = "bguevel@mines.edu" },
+  { name = "Luca Burns", email = "lucaburns@mines.edu" },
+  { name = "Cole McGuire", email = "cpmcguire@mines.edu" }
 ]
 readme = "README.md"
 requires-python = ">=3.11"
