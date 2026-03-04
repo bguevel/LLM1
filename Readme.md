@@ -123,7 +123,9 @@ seed you how hello how hello there seed seed seed seed seed you seed there there
 ### Trained output (luca-gpt1)
 **Prompt:** `why is the sky blue`
 
+```
 of the presence of his presence . begone , i should remain in agony and decisive . how was i engrossed much i am happy , and my ship . never in the most grateful little air and illuminate his composure . he did his eyes , and i was carried in the moment of my intellect . he could not prevail of what he had never down and wet branches . but when some airs , he showed signs
+```
 
 ### Untrained output (luca-gpt1)
 **Prompt:** `why is the sky blue`
