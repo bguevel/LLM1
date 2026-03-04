@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: firstllm
+Version: 0.1.0
+Summary: Custom transformer with dynamic vocab and Wikipedia training
+Author-email: Ben Guevel <bguevel@mines.edu>, Luca Burns <lucaburns@mines.edu>, Cole McGuire <cpmcguire@mines.edu>
+Project-URL: Homepage, https://github.com/bguevel/LLM1
+Project-URL: Documentation, https://github.com/bguevel/LLM1
+Project-URL: Repository, https://github.com/bguevel/LLM1
+Project-URL: Issues, https://github.com/bguevel/LLM1
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+Requires-Dist: scipy
+Requires-Dist: ipython
+Requires-Dist: ipykernel
+Requires-Dist: ipywidgets
+Requires-Dist: torch
+Requires-Dist: torchvision
+Requires-Dist: jaxtyping
+Requires-Dist: transformer_lens
+Requires-Dist: muutils>=0.6.19
+Requires-Dist: zanj>=0.3.1
+Requires-Dist: trnbl>=0.0.2
+Requires-Dist: lmcat
