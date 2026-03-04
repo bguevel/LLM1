@@ -22,11 +22,6 @@ class Config:
     num_blocks: int
 
 
-# -------------------------
-# Tokenizer (dynamic vocab, grows on the fly)
-#   - same behavior as yours, but with a slightly improved regex
-#   - DOES NOT need to change unless you want the regex update
-# -------------------------
 class WordTokenizer:
     def __init__(self, initial_text: str = "", stoi: dict[str, int] | None = None):
         # If stoi provided (from checkpoint), use it. Otherwise start empty.
@@ -68,10 +63,6 @@ class WordTokenizer:
     def decode(self, ids: list[int]) -> str:
         return " ".join(self.itos[i] for i in ids)
 
-
-# -------------------------
-# Embedding (unchanged, but we will RESIZE its weight in Transformer.resize_vocab)
-# -------------------------
 class Embedding(nn.Module):
     def __init__(self, config: Config, d_vocab: int):
         super().__init__()
@@ -84,9 +75,6 @@ class Embedding(nn.Module):
         return self.weight[x]  # [B,T] -> [B,T,D]
 
 
-# -------------------------
-# MLP (unchanged)
-# -------------------------
 class MLP(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
@@ -98,9 +86,6 @@ class MLP(nn.Module):
         return self.linear2(self.relu(self.linear1(x)))
 
 
-# -------------------------
-# Attention_head (UPDATED: accepts a precomputed causal mask)
-# -------------------------
 class Attention_head(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
@@ -116,7 +101,6 @@ class Attention_head(nn.Module):
     def forward(self, x: torch.Tensor, causal_mask: torch.Tensor = None) -> torch.Tensor:
         """
         x: [B, T, d_model]
-        causal_mask: [T, T] bool tensor where True means "mask this position"
         returns: [B, T, d_model]
         """
         if x.dim() == 2:
@@ -146,9 +130,6 @@ class Attention_head(nn.Module):
         return self.W_o(out)  # [B,T,D]
 
 
-# -------------------------
-# TransformerBlock (UPDATED: passes mask through attention)
-# -------------------------
 class TransformerBlock(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
@@ -163,13 +144,6 @@ class TransformerBlock(nn.Module):
         return x
 
 
-# -------------------------
-# Transformer (UPDATED heavily):
-#   - DOES NOT build tokenizer from text
-#   - Accepts tokenizer
-#   - Adds resize_vocab() to grow embedding & unembedding when vocab grows
-#   - Caches causal mask to avoid rebuilding each forward
-# -------------------------
 class Transformer(nn.Module):
     def __init__(self, config: Config, tokenizer: WordTokenizer):
         super().__init__()
@@ -177,6 +151,11 @@ class Transformer(nn.Module):
         d_vocab = tokenizer.vocab_size
 
         self.embed = Embedding(config, d_vocab)
+
+        # Positional embedding stuff
+        self.max_seq_len = 20000  # raise this if you train on longer sequences
+        self.pos_emb = nn.Embedding(self.max_seq_len, config.d_model)
+
         self.blocks = nn.ModuleList([TransformerBlock(config) for _ in range(config.num_blocks)])
         self.ln_f = nn.LayerNorm(config.d_model)
         self.unembed = nn.Linear(config.d_model, d_vocab)
@@ -192,10 +171,6 @@ class Transformer(nn.Module):
         return self._causal_mask
 
     def resize_vocab(self, new_vocab_size: int) -> None:
-        """
-        Expand embedding + unembedding to new_vocab_size while preserving learned weights.
-        Call this AFTER tokenizer.encode() if vocab may have grown.
-        """
         old_vocab_size = self.embed.weight.size(0)
         if new_vocab_size <= old_vocab_size:
             return
@@ -204,13 +179,13 @@ class Transformer(nn.Module):
         dtype = self.embed.weight.dtype
         d_model = self.embed.weight.size(1)
 
-        # ---- Resize Embedding ----
+        #Resize Embedding
         new_embed = nn.Parameter(torch.empty(new_vocab_size, d_model, device=device, dtype=dtype))
         nn.init.normal_(new_embed, mean=0.0, std=self._init_std)
         new_embed.data[:old_vocab_size] = self.embed.weight.data
         self.embed.weight = new_embed
 
-        # ---- Resize Unembedding (Linear) ----
+        #Resize Unembedding
         old_unembed: nn.Linear = self.unembed
         new_unembed = nn.Linear(d_model, new_vocab_size, bias=True).to(device=device, dtype=dtype)
 
@@ -226,8 +201,21 @@ class Transformer(nn.Module):
         if token_ids.dim() == 1:
             token_ids = token_ids.unsqueeze(0)
 
-        x = self.embed(token_ids)  # [B,T,D]
-        mask = self._get_causal_mask(x.size(1), x.device)
+        B, T = token_ids.shape
+
+        # Positional embeddings 
+        if T > self.max_seq_len:
+            raise ValueError(
+                f"Sequence length T={T} exceeds max_seq_len={self.max_seq_len}. "
+                f"Increase max_seq_len or use RoPE/ALiBi."
+            )
+
+        tok = self.embed(token_ids)                          # [B,T,D]
+        pos_ids = torch.arange(T, device=token_ids.device)   # [T]
+        pos = self.pos_emb(pos_ids).unsqueeze(0)             # [1,T,D]
+        x = tok + pos                                        # [B,T,D]
+
+        mask = self._get_causal_mask(T, x.device)
 
         for block in self.blocks:
             x = block(x, causal_mask=mask)
@@ -236,9 +224,6 @@ class Transformer(nn.Module):
         return self.unembed(x)  # [B,T,V]
 
 
-# -------------------------
-# Dataset (unchanged)
-# -------------------------
 class NextTokenDataset(torch.utils.data.Dataset):
     def __init__(self, token_ids, seq_len):
         self.token_ids = token_ids
@@ -254,10 +239,6 @@ class NextTokenDataset(torch.utils.data.Dataset):
         return x, y
 
 
-# -------------------------
-# Sampling (your generate_sample + top_k_filter can remain)
-#   (included minimal needed helpers)
-# -------------------------
 def top_k_filter(logits: torch.Tensor, k: Optional[int]):
     if k is None or k <= 0:
         return logits
@@ -285,34 +266,27 @@ def generate_sample(model: Transformer, prompt_tokens: torch.Tensor, max_new_tok
 
     return tokens
 
-
-# -------------------------
-# Training (UPDATED):
-#   - works with ONE persistent model
-#   - handles dynamic vocab: tokenizer.encode() may grow vocab => model.resize_vocab(...)
-#   - IMPORTANT: if vocab grew, we must create optimizer AFTER resize
-# -------------------------
 def train(
     epochs: int,
     lr: float,
     device: str,
     grad_clip,
     prompt: str,
-    config: Config,          # kept for your signature compatibility (not used here)
+    config: Config,
     model: Transformer,
     batch_size: int = 16,
-    save_path: str = "model_weights.pt",
+    save_path: str = "checkpoint.pt",
 ):
     model.to(device)
 
-    # 1) Encode (may grow vocab)
+    # 1) Encode
     token_ids = model.tokenizer.encode(prompt)
     model.resize_vocab(model.tokenizer.vocab_size)
 
-    # 2) Resize model to match new vocab size (critical!)
+    # Resize model to match new vocab size
     model.resize_vocab(model.tokenizer.vocab_size)
 
-    # 3) Build dataset
+    # Build dataset
     seq_len = len(token_ids) - 1
     if seq_len <= 0:
         print("[warn] prompt too short to train on.")
@@ -321,7 +295,7 @@ def train(
     dataset = NextTokenDataset(token_ids, seq_len)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
 
-    # 4) Optimizer AFTER resize so it sees current parameters
+    # Optimizer AFTER resize so it sees current parameters
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 
     for epoch in range(epochs):
@@ -362,25 +336,32 @@ def load_weights_if_present(model: Transformer, device: str, path: str = CHECKPO
 
     loaded_model, loaded_config = loaded
 
-    # Copy weights + tokenizer into existing model
-    model.load_state_dict(loaded_model.state_dict())
+    # make/load tokenizer first
     model.tokenizer = loaded_model.tokenizer
+    model.resize_vocab(model.tokenizer.vocab_size)
+
+    # now load weights
+    model.load_state_dict(loaded_model.state_dict(), strict=True)
 
     print("Loaded existing checkpoint.")
     return True
     
 def GenerateResponse(prompt: str, config: Config, new_tokens: int, temp: float, top_k: int, model: Transformer):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
 
-    if os.path.exists("model_weights.pt"):
-        model.load_state_dict(torch.load("model_weights.pt", map_location=device))
-        print("Loaded existing weights.")
+    loaded = load_checkpoint(path=CHECKPOINT_PATH, device=device)
+    if loaded is not None:
+        loaded_model, loaded_config = loaded
+        model.load_state_dict(loaded_model.state_dict())
+        model.tokenizer = loaded_model.tokenizer
+        print("Loaded existing checkpoint.")
     else:
-        print("No saved weights found. Training from scratch.")
+        print("No checkpoint found. Using current model weights.")
+
+    model.to(device).eval()
 
     ids = model.tokenizer.encode(prompt)
-    model.resize_vocab(model.tokenizer.vocab_size)   # critical
+    model.resize_vocab(model.tokenizer.vocab_size)
     prompt_tokens = torch.tensor(ids, dtype=torch.long, device=device)
 
     out = generate_sample(model, prompt_tokens, new_tokens, temp, top_k)
@@ -416,13 +397,6 @@ def read_titles_from_file(path: str) -> list[str]:
 
 def train_from_wiki_titles_file( titles_file: str, model: Transformer, config: Config, device: str = "cpu", epochs_per_page: int = 100, lr: float = 5e-4, grad_clip: float | None = 1.0, sleep_s: float = 0.5, skip_disambiguation: bool = True, min_chars: int = 50,
 ):
-    """
-    Reads Wikipedia page titles from a file, fetches each page summary,
-    then calls YOUR train() using the summary text as `prompt`.
-
-    NOTE: Your tokenizer grows vocab when encoding new text. If vocab grows
-    after model init, your embedding/unembedding sizes can mismatch.
-    """
     titles = read_titles_from_file(titles_file)
     print(f"Found {len(titles)} titles in {titles_file}")
 
@@ -458,7 +432,7 @@ def train_from_wiki_titles_file( titles_file: str, model: Transformer, config: C
             model=model,
         )
 
-        # be polite to Wikipedia
+        #to ease serve usage
         if sleep_s and sleep_s > 0:
             time.sleep(sleep_s)
 
@@ -495,14 +469,13 @@ def training_menu(model: Transformer, config: Config, device: str):
                 print(f"[warn] File not found: {titles_file}")
                 continue
 
-            # Train over wiki pages (calls your train() internally for each page)
+            #settings for the training of the model
             epochs_per_page = int(input("epochs per page (e.g. 1-3)> ").strip() or "1")
             lr = float(input("learning rate (e.g. 0.0005)> ").strip() or "0.0005")
             grad_clip = float(input("grad clip (e.g. 1.0, blank for none)> ").strip() or "1.0")
             sleep_s = float(input("sleep seconds between requests (e.g. 0.5)> ").strip() or "0.5")
 
-            # This function should exist from earlier (the version that calls YOUR train()).
-            # If you named it differently, update the call here.
+            #do the training on the wiki articles
             train_from_wiki_titles_file(
                 titles_file=titles_file,
                 model=model,
@@ -532,11 +505,11 @@ def training_menu(model: Transformer, config: Config, device: str):
                 continue
 
             epochs = int(input("epochs (e.g. 10)> ").strip() or "10")
-            lr = float(input("learning rate (e.g. 0.0005)> ").strip() or "0.0005")
+            lr = float(input("learning rate (ex. 0.0005)> ").strip() or "0.0005")
             gc_in = input("grad clip (e.g. 1.0, blank for none)> ").strip()
             grad_clip = None if gc_in == "" else float(gc_in)
 
-            # Call your updated train() that accepts an existing model
+            # Call train
             train(
                 epochs=epochs,
                 lr=lr,
@@ -552,7 +525,7 @@ def training_menu(model: Transformer, config: Config, device: str):
 
         print("[warn] Invalid choice. Please choose a, b, or x.")
 
-MODEL_PATH = "model_weights.pt"
+MODEL_PATH = CHECKPOINT_PATH
 
 
 @torch.no_grad()
@@ -639,7 +612,7 @@ def main():
         )
         tokenizer = WordTokenizer("seed")
         model = Transformer(config, tokenizer).to(device)
-        save_checkpoint(model, config)  # optional: create checkpoint immediately
+        
 
     while True:
         print("\n=== Main Menu ===")
@@ -689,7 +662,7 @@ def load_checkpoint(path: str = CHECKPOINT_PATH, device: str = "cpu") -> tuple[T
     # Rebuild model with correct initial vocab size
     model = Transformer(config, tokenizer).to(device)
 
-    # If vocab grew since model init (shouldn't here, but safe), ensure match
+    # If vocab grew since model init, ensure match
     model.resize_vocab(model.tokenizer.vocab_size)
 
     # Load weights
