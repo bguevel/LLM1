@@ -231,18 +231,26 @@ class TransformerBlock(nn.Module):
 
 class Transformer(nn.Module):
 
-    def __init__(self, config: Config, n_layers = 2):
+    def __init__(self, config: Config):
         super().__init__()
         self.embedding = nn.Embedding(config.d_vocab, config.d_model)
+        self.pos_embedding = nn.Embedding(config.n_context, config.d_model)
+
         self.blocks = nn.ModuleList([TransformerBlock(config) for _ in range(config.n_layers)])
         self.unembedding = nn.Linear(config.d_model, config.d_vocab)
 
     def forward(self, tokens):
-        x = self.embedding(tokens)
-        for block in self.blocks:
-            x = block(x) # essentially executes TransformerBlock for each layer
-        logits = self.unembedding(x)
+        B, T = tokens.shape
 
+        positions = torch.arange(T, device=tokens.device)
+        positions = positions.unsqueeze(0).expand(B, T)
+
+        x = self.embedding(tokens) + self.pos_embedding(positions)
+
+        for block in self.blocks:
+            x = block(x)
+
+        logits = self.unembedding(x)
         return logits
     
 config = Config(

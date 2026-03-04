@@ -403,7 +403,7 @@ def train_on_plain_text_file(path: str) -> str:
         return f.read()
 
 
-def training_menu(model: Transformer, config: Config, device: str, checkpoint_path: str):
+def training_menu(model: Transformer, config: Config, device: str, checkpoint_path: str | None):
     while True:
         print("\n--- Training mode ---")
         print("a) Train on Wikipedia summaries (titles from file)")
@@ -567,7 +567,7 @@ def load_checkpoint(path: str = CHECKPOINT_PATH, device: str = "cpu") -> tuple[T
     tokenizer = WordTokenizer(stoi=ckpt["stoi"])
     model = Transformer(config, tokenizer).to(device)
     model.resize_vocab(model.tokenizer.vocab_size)
-    model.load_state_dict(ckpt["model_state"], strict=True)
+    model.load_state_dict(ckpt["model_state"], strict=False)
     return model, config
 
 
